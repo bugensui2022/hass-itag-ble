@@ -1,4 +1,4 @@
-# Home Assistant iTag BLE 漫游集成 (itag_ble)
+# Home Assistant iTag BLE 自定义集成 (itag_ble)
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
 ![Home Assistant](https://img.shields.io/badge/Home--Assistant-Integration-blue.svg)

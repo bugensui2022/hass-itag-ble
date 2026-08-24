@@ -1,0 +1,5 @@
+{
+  "name": "iTag BLE Integration",
+  "iot_class": "local_polling",
+  "render_readme": true
+}

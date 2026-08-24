@@ -3,7 +3,7 @@
   "name": "iTag BLE Pro",
   "config_flow": true,
   "iot_class": "local_push",
-  "documentation": "https://bbs.hassbian.com/thread-32999-1-1.html",
+  "documentation": "https://github.com/bugensui2022/hass-itag-ble",
   "requirements": ["bleak>=0.19.5", "bleak-retry-connector>=3.3.0"],
   "dependencies": ["bluetooth"],
   "version": "1.2.1"

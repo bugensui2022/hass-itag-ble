@@ -72,7 +72,7 @@ custom_components/itag_ble/
 1. 确保您的 Home Assistant 已安装 [HACS](https://hacs.xyz/)。
 2. 打开 **HACS** -> 点击右上角 **三个点** -> 选择 **自定义存储库 (Custom repositories)**。
 3. 在存储库地址中输入您的 GitHub 仓库 URL：
-   `https://github.com/您的用户名/您的仓库名`
+   `https://github.com/bugensui2022/hass-itag-ble`
 4. 类别 (Category) 选择 **集成 (Integration)**，点击 **添加**。
 5. 在列表中找到 **iTag BLE Integration**，点击 **下载**。
 6. **重启 Home Assistant**。

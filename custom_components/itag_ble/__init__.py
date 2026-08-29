@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import time
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.components import bluetooth
@@ -8,6 +9,7 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers import device_registry as dr
 from bleak import BleakClient
 from bleak_retry_connector import establish_connection
+
 from .const import *
 
 _LOGGER = logging.getLogger(__name__)
@@ -20,15 +22,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         def __init__(self):
             self.client = None
             self.battery = 0
-            self.last_action = "null" 
+            self.last_action = "null"
             self.connected = False
             self.current_mode = "静音模式"
             self.connection_source = "查找中..."
-            self._click_task = None 
+            self._click_task = None
             self._listeners = []
             self._last_battery_time = 0
+            # 🌟 新增：手动唤醒触发器
+            self._connect_trigger = asyncio.Event()
 
         def add_listener(self, cb): self._listeners.append(cb)
+        
         def update(self): [cb() for cb in self._listeners]
 
         @property
@@ -41,11 +46,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             )
 
         def _on_disconnect(self, client: BleakClient):
-            """👈 关键：链路一旦断开（如漫游超出范围），立即标记并触发重连循环"""
+            """链路一旦断开（如漫游超出范围），立即标记并触发重连循环"""
             _LOGGER.debug(f"iTag {address} 链路已断开，准备重新寻找节点")
             self.connected = False
             self.client = None
             self.update()
+
+        # 🌟 新增：由按键调用的强制连接方法
+        def force_connect(self):
+            if not self.connected:
+                _LOGGER.debug(f"接收到手动指令，正在强制唤醒 iTag {address} 连接进程")
+                self._connect_trigger.set()
+
+        # 🌟 新增：带有中断唤醒功能的智能休眠
+        async def _smart_sleep(self, delay):
+            try:
+                await asyncio.wait_for(self._connect_trigger.wait(), timeout=delay)
+                # 如果是被按钮唤醒的，清除标志位，直接放行
+                self._connect_trigger.clear()
+            except asyncio.TimeoutError:
+                # 正常时间到了，放行
+                pass
 
         async def send_cmd(self, val):
             if self.client and self.client.is_connected:
@@ -82,10 +103,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         async def run(self):
             while True:
-                # 1. 扫描提速：找不到设备时等待时间从 10s 缩短到 3s，提高漫游捕获速度
+                # 1. 扫描寻找设备
                 ble_device = bluetooth.async_ble_device_from_address(hass, address)
-                if not ble_device: 
-                    await asyncio.sleep(3); continue
+                if not ble_device:
+                    # 🌟 替换：使用智能休眠，允许随时被按钮打断
+                    await self._smart_sleep(3)
+                    continue
                 
                 # 2. 节点名称解析
                 source_id = ble_device.details.get("source", "local")
@@ -104,10 +127,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         self.connection_source = scanner.name if scanner else f"网关 ({source_id})"
                 
                 try:
-                    # 3. 连接加固：增加断开回调，确保漫游切换无死角
+                    # 3. 连接加固
                     client = await establish_connection(
-                        BleakClient, 
-                        ble_device, 
+                        BleakClient,
+                        ble_device,
                         address,
                         disconnected_callback=self._on_disconnect
                     )
@@ -117,20 +140,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         self.connected = True
                         self.update()
                         
-                        # 4. 初始化序列（带超时保护）：防止因信号抖动导致集成挂死
+                        # 4. 初始化序列
                         try:
-                            # 必须写入，否则部分芯片会因没握手而睡死
                             await asyncio.wait_for(client.write_gatt_char(CHR_ITAG_ANTI_LOSS, b"\x00"), timeout=4.0)
-                            # 同步当前工作模式
                             await asyncio.wait_for(self.client.write_gatt_char(CHR_ALERT_LEVEL, bytes([MODES.get(self.current_mode, 0x02)])), timeout=4.0)
                         except: pass
                         
                         await client.start_notify(CHR_ITAG_NOTIFY, self._on_notify)
                         
-                        # 5. 心跳监控：在连接期间维持循环
+                        # 5. 心跳监控
                         while client.is_connected:
                             now = time.time()
-                            # 每2小时读取一次电量（低功耗策略）
                             if now - self._last_battery_time > 7200:
                                 try:
                                     bat = await asyncio.wait_for(client.read_gatt_char(CHR_BATTERY_LEVEL), timeout=5.0)
@@ -139,19 +159,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                                     self.update()
                                 except: pass
                             await asyncio.sleep(1)
-                except Exception as e: 
+                except Exception as e:
                     self.connected = False
                     self.update()
                     _LOGGER.debug(f"iTag 连接失败或正在漫游: {e}")
-                    await asyncio.sleep(2) # 失败后快速进入下一次扫描
+                    # 🌟 替换：使用智能休眠，允许随时被按钮打断
+                    await self._smart_sleep(2)
 
     coord = ITagCoordinator()
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coord
     
-    # 采用标准后台任务管理，卸载时会自动清理
     entry.async_create_background_task(hass, coord.run(), "itag_ble_loop")
-
-    await hass.config_entries.async_forward_entry_setups(entry, ["sensor", "binary_sensor", "select"])
+    
+    # 🌟 修改：平台列表中加入了 "button"
+    await hass.config_entries.async_forward_entry_setups(entry, ["sensor", "binary_sensor", "select", "button"])
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
     return True
 
@@ -159,7 +180,8 @@ async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     await hass.config_entries.async_reload(entry.entry_id)
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    unload_ok = await hass.config_entries.async_unload_platforms(entry, ["sensor", "binary_sensor", "select"])
+    # 🌟 修改：平台列表中加入了 "button"
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, ["sensor", "binary_sensor", "select", "button"])
     if unload_ok:
         hass.data[DOMAIN].pop(entry.entry_id)
     return unload_ok

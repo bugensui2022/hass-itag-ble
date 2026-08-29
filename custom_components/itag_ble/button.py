@@ -12,7 +12,7 @@ class ITagForceConnectButton(ButtonEntity):
     """触发强制连接的实体按钮"""
     
     _attr_has_entity_name = True
-    _attr_name = "强制主动连接"
+    _attr_name = "主动连接"
     _attr_icon = "mdi:bluetooth-connect"
 
     def __init__(self, coord):
